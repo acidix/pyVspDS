@@ -1,0 +1,161 @@
+#!/usr/bin/env python
+
+from pysphere import VIServer
+#from pprint import pprint
+import sys,os,inspect,ConfigParser,logging
+import re
+from threading import Thread
+from Queue import Queue
+
+# ------------------------------------------------------------------------------------------------------------
+# third-party lib handling
+racklib = os.path.realpath(os.path.abspath(os.path.join(os.path.split(inspect.getfile( inspect.currentframe() ))[0],"../python/lib/racktables")))
+synclib = os.path.realpath(os.path.abspath(os.path.join(os.path.split(inspect.getfile( inspect.currentframe() ))[0],"../../pyRackSync")))
+sys.path.insert(0, racklib)
+sys.path.insert(0, synclib)
+from client import *
+from RacktablesSyncClient import *
+# ------------------------------------------------------------------------------------------------------------
+# logging configuration
+logging.basicConfig(level=logging.DEBUG,
+                    format='[%(levelname)s] (%(threadName)-10s) %(message)s',
+                    )
+
+# ------------------------------------------------------------------------------------------------------------
+# worker definition
+def syncObj(vmItem):
+	# get the VM properties
+	try:
+		viPoolItem = viPool.get()
+		logging.debug("Using " + str(viPoolItem[0]))
+		vm = viPoolItem[1].get_vm_by_path(vmItem)
+		viPool.put(viPoolItem)
+		vmProperties = vm.get_properties(from_cache=False)
+	except Exception, errtxt:
+		logging.exception("Error getting VM Details: " + str(errtxt))
+
+	# build the sync object
+	resVmSyncObj = {}
+
+	resVmName = vmProperties['name']
+
+	if resVmName[0:6].isdigit():
+		logging.debug("Trying to clean up VM Name ... Before: " + resVmName)
+		resVmName = resVmName[7:]
+		logging.debug("Trying to clean up VM Name ... After : " + resVmName)
+
+	logging.debug("Getting network information")
+	resVmSyncObj['name'] = resVmName
+	resVmSyncObj['network'] = {}
+	for deviceIdx, device in vmProperties['devices'].items():
+			logging.debug("Processing device " + device['label'])
+			try:
+				if device['macAddress'] != '':
+					logging.debug("Adding device " + device['label'])
+					resDevDev = device['label'][-1]
+					resDevDev = int(resDevDev) - 1
+					resDevDev = "eth" + str(resDevDev)
+					resVmSyncObj['network'][resDevDev] = {}
+					resVmSyncObj['network'][resDevDev]['name'] = resDevDev
+					resVmSyncObj['network'][resDevDev]['mac'] = device['macAddress']
+					resVmSyncObj['network'][resDevDev]['net'] = device['summary']
+					resVmSyncObj['network'][resDevDev]['fqdn'] = resVmName + ".eaalab.hpi.uni-potsdam.de"
+					try:
+						vm_ip = vm.get_property('ip_address', from_cache=False)
+						if vm_ip != None:
+							logging.debug("Adding IP for interface " + device['label'])
+							resVmSyncObj['network'][resDevDev]['ip'] = vm.get_property('ip_address', from_cache=False)
+					except Exception, errtxt:
+						logging.debug("No IP found for interface " + device['label'] + ": " + str(errtxt))
+						continue
+			except KeyError:
+				logging.debug("Device " + device['label'] + " does not seem to be a network interface")
+				continue
+
+	try:
+		resVmSyncObj['attrs'] = {}
+		# DRAM, GB
+		resVmSyncObj['attrs'][17] = vmProperties['memory_mb'] / 1024
+		# CPU, Cores
+		resVmSyncObj['attrs'][10000] = vmProperties['num_cpu']
+		# FQDN
+		resVmSyncObj['attrs'][3] = resVmName + ".eaalab.hpi.uni-potsdam.de"
+		contactRegExp = re.compile("^[^\s]+\s[^\s]+$")
+		if contactRegExp.match(vm.properties.parent.name):
+			# Contact person
+			resVmSyncObj['attrs'][14] = vm.properties.parent.name
+	except Exception, errtxt:
+		logging.exception("Error getting VM Memory and CPU Information: " + str(errtxt))
+
+	logging.debug("Initiating Sync")
+	# temporary restrict to syncing only 1 VM
+	try:
+		rtPoolItem = rtPool.get()
+		logging.debug("Using " + str(rtPoolItem[0]))
+		rtPoolItem[1].syncServer(resVmSyncObj, '1504', '25')
+		rtPool.put(rtPoolItem)
+	except Exception, errtxt:
+		logging.exception("Error in synchronizing: " + str(errtxt))
+
+# ------------------------------------------------------------------------------------------------------------
+# main thread
+def main():
+	
+	# Define the VMWare vSphere Server object pool
+	logging.debug("Creating viPool")
+	viPool = Queue()
+
+	for x in range(0,4):
+		logging.debug("Start - Adding vmPool item " + str(x))
+		try:
+			vmServer = {}
+			vmServer[0] = "VMWare-" + str(x)
+			vmServer[1] = VIServer()
+			vmServer[1].connect("vsphere.local", "root", "secret")
+			viPool.put(vmServer)
+			logging.debug("Done  - Adding vmPool item " + str(x))
+		except Exception, errtxt:
+			logging.exception("Error adding item to the vmPool: " + str(errtxt))
+			raise
+
+	# Define the Racktables object pool
+	logging.debug("Creating rtPool")
+	rtPool = Queue()
+	
+	for x in range(0,4):
+		logging.debug("Start - Adding rtPool item " + str(x))
+		try:
+			rtSyncClient = {}
+			rtSyncClient[0] = "Racktables-" + str(x)
+			rtClient = RacktablesClient("http://racktables/api.php", "admin", "secret")
+			rtSyncClient[1] = RacktablesSyncClient(rtClient)
+			rtPool.put(rtSyncClient)
+			logging.debug("Done  - Adding rtPool item " + str(x))
+		except Exception, errtxt:
+			logging.exception("Error adding item to the rtPool: " + str(errtxt))
+			raise
+	
+	try:
+		vmRegExp = re.compile("^.*\]\ (.*?)\/.*$")
+	except Exception, errtxt:
+		logging.exception("Error compiling regular expression: " + str(errtxt))
+		raise
+	
+	logging.debug("Getting list of powered on virtual machines")
+	try:
+		viPoolItem = viPool.get()
+		vmList = viPoolItem[1].get_registered_vms(status='poweredOn')
+		viPool.put(viPoolItem)
+	except Exception, errtxt:
+		logging.exception("Error getting list of powered on virtual machines: " + str(errtxt))
+	
+	for vmItem in vmList:
+		try:
+			#Thread(name=str(vmRegExp.split(vmItem)[1]), target=syncObj, args=(vmItem)).start()
+			syncObj(vmItem)
+		except Exception, errtxt:
+			logging.debug("Error: " + str(errtxt))
+	
+
+if __name__ == '__main__':
+	main()
