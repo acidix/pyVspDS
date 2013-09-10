@@ -18,6 +18,8 @@ __config__ = {
                 {
                     "objtype_id": "1504",
                     "linkparent": "25",
-                    "dnssuffix": ".mycompany.lan"
+                    "dnssuffix": ".mycompany.lan",
+                    "force": False,
+                    "forceattrs": ["17", "10000", "14"]
                 }
 }

@@ -59,19 +59,18 @@ def syncObject(vmItem):
             vmDev = int(vmDev) - 1
             vmDev = "eth" + str(vmDev)
 
-            vmObject['network'][vmDev] = { 
+            vmObject["network"][vmDev] = { 
                 "name": vmDev,
                 "mac" : device["macAddress"],
                 "net" : device["summary"],
-                "fqdn": vmDev + __config__["general"]["dnssuffix"]
+                "fqdn": vmName + __config__["general"]["dnssuffix"],
+                "force": __config__["general"]["force"]
             }
 
-            vmIp = vm.get_property("ip_address", from_cache=False)
+    vmIp = vm.get_property("ip_address", from_cache=False)
 
-            if vmIp == None:
-                continue
-
-            vmObject["network"][vmDev]["ip"] = vmIp
+    if vmIp and len(vmObject["network"]) == 1:
+        vmObject["network"][vmDev]["ip"] = vmIp
 
     vmObject["attrs"] = {
         "17"   : vmProperties["memory_mb"] / 1024,
@@ -85,7 +84,8 @@ def syncObject(vmItem):
         # Contact person only if parent folder matches "Firstname Lastname"
         vmObject["attrs"]["14"] = vm.properties.parent.name
 
-    vmObject["forceattrs"] = ["17", "10000", "14"]
+    vmObject["forceattrs"] = __config__["general"]["forceattrs"]
+    vmObject["network"]["force"] = __config__["general"]["force"]
 
     vmObject["objtype_id"] = __config__["general"]["objtype_id"]
     vmObject["linkparent"] = __config__["general"]["linkparent"]
@@ -138,6 +138,8 @@ def main():
                         help="increase output verbosity")
     parser.add_argument('-H', '--host',type=str,
                         help="Only synchronize hosts fuzzy matching this string.")
+    parser.add_argument('-f', '--force',action="store_true",
+                        help="Force update.")
     args = parser.parse_args()
 
     if args.verbose:
@@ -145,6 +147,9 @@ def main():
                             format='[%(levelname)s] (%(threadName)-10s) %(message)s')
     else:
         logging.basicConfig(format='[%(levelname)s] (%(threadName)-10s) %(message)s')
+
+    if args.force:
+        __config__["general"]["force"] = True
     
     createVmWorker(viPool, 5)
     createRtWorker(rtPool, 5)
