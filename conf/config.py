@@ -1,3 +1,6 @@
+"""Configuration file for pyVspDS
+"""
+
 __config__ = {
             "racktables":
                 {

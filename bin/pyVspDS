@@ -30,8 +30,7 @@ rtPool = Queue()
 def syncObject(vmItem):
     """Build an object tree from vSphere
 
-    Keyword Arguments:
-    vmItem -- vmPath as reported by get_registered_vms (string)
+    :param vmItem: vmPath as reported by get_registered_vms (string)
 
     """
     viPoolItem = viPool.get()
@@ -76,13 +75,14 @@ def syncObject(vmItem):
 
     vmObject["attrs"] = {
         "17"   : vmProperties["memory_mb"] / 1024,
+        # Custom attribute
         "10000": vmProperties["num_cpu"],
         "3"    : vmName + __config__["general"]["dnssuffix"]
     }
 
     contactRegExp = re.compile("^[^\s]+\s[^\s]+$")
     if contactRegExp.match(vm.properties.parent.name):
-        # Contact person
+        # Contact person only if parent folder matches "Firstname Lastname"
         vmObject["attrs"]["14"] = vm.properties.parent.name
 
     vmObject["forceattrs"] = ["17", "10000", "14"]
@@ -98,9 +98,8 @@ def syncObject(vmItem):
 def createRtWorker(QueueObj, items=5):
     """Create workers of type RacktablesClient
 
-    Keyword Arguments:
-    QueueObj -- Object queue to add the worker to
-    items    -- Number of items to add to the queue
+    :param QueueObj: Object queue to add the worker to
+    :param items: Number of items to add to the queue
 
     """
     for x in range(0,items - 1):
@@ -117,8 +116,8 @@ def createVmWorker(QueueObj, items=5):
     """Create workers of type VIServer
 
     Keyword Arguments:
-    QueueObj -- Object queue to add the worker to
-    items    -- Number of items to add to the queue
+    :param QueueObj: Object queue to add the worker to
+    :param items: Number of items to add to the queue
 
     """
     for x in range(0,items - 1):
